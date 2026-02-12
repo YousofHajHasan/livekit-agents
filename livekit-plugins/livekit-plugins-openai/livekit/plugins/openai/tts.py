@@ -227,7 +227,7 @@ class ChunkedStream(tts.ChunkedStream):
                     mime_type=f"audio/{self._opts.response_format}",
                 )
 
-                async for data in stream.iter_bytes():
+                async for data in stream.iter_bytes(8192):
                     output_emitter.push(data)
 
             output_emitter.flush()
