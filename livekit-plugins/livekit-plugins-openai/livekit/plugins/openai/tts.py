@@ -13,8 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-print("================= DEBUG CHECK ==================")
-
 import asyncio
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -51,6 +49,8 @@ class _TTSOptions:
     speed: float
     instructions: str | None
     response_format: RESPONSE_FORMATS
+
+print("================= DEBUG CHECK ==================")
 
 
 class TTS(tts.TTS):
