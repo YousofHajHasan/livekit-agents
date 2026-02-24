@@ -2194,9 +2194,9 @@ class AgentActivity(RecognitionHooks):
                 break
 
         if last_user_idx is not None:
-            reminder = llm.ChatMessage.create(
+            reminder = llm.ChatMessage(
                 role="developer",
-                content=f"IMPORTANT — {gender_hint_text}. Apply the correct gender forms to THIS response only.",
+                content=[f"IMPORTANT — {gender_hint_text}. Apply the correct gender forms to THIS response only."],
                 id=_GENDER_REMINDER_ID,
             )
             items.insert(last_user_idx, reminder)
