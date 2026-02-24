@@ -95,6 +95,10 @@ if TYPE_CHECKING:
     from ..llm import mcp
     from .agent_session import AgentSession
 
+try:
+    from livekit.plugins.gender_detection import GenderDetector as _GenderDetector
+except ImportError:
+    _GenderDetector = None  # type: ignore[assignment,misc]
 
 _AgentActivityContextVar = contextvars.ContextVar["AgentActivity"]("agents_activity")
 _SpeechHandleContextVar = contextvars.ContextVar["SpeechHandle"]("agents_speech_handle")
@@ -215,6 +219,15 @@ class AgentActivity(RecognitionHooks):
 
         self._on_enter_task: asyncio.Task | None = None
         self._on_exit_task: asyncio.Task | None = None
+
+        # gender detector — populated from AgentSession if the plugin is installed
+        self._gender_detector = (
+            sess._gender_detector  # type: ignore[attr-defined]
+            if hasattr(sess, "_gender_detector")
+            else None
+        )
+        # base instructions without gender suffix — set on first use
+        self._base_instructions: str | None = None
 
         if (
             isinstance(self.llm, llm.RealtimeModel)
@@ -1876,20 +1889,9 @@ class AgentActivity(RecognitionHooks):
             self._false_interruption_timer.cancel()
             self._false_interruption_timer = None
 
-        if (
-            self._session.agent_state != "speaking"
-            and self._pause_enabled()
-            and (current_speech := self._current_speech) is not None
-            and not current_speech.interrupted
-            and current_speech.allow_interruptions
-            and (self._paused_speech is None or self._paused_speech.handle is not current_speech)
-        ):
-            # pause the audio output if agent is not speaking (in thinking state);
-            # resume immediately when user stops speaking, the timeout will be updated by _interrupt_by_audio_activity
-            assert (audio_output := self._session.output.audio) is not None
-
-            self._update_paused_speech(current_speech, timeout=0)
-            audio_output.pause()
+        # reset gender detector for this new turn
+        if self._gender_detector is not None:
+            self._gender_detector.begin_turn()
 
     def on_end_of_speech(self, ev: vad.VADEvent | None) -> None:
         speech_end_time = time.time()
@@ -1913,10 +1915,22 @@ class AgentActivity(RecognitionHooks):
         )
         self._user_silence_event.set()
 
-        if self._paused_speech:
-            self._start_false_interruption_timer(self._paused_speech.timeout)
+        # finalize gender inference with the complete speech buffer
+        if self._gender_detector is not None:
+            self._gender_detector.finalize()
+
+        if (
+            self._paused_speech
+            and (timeout := self._session.options.false_interruption_timeout) is not None
+        ):
+            # schedule a resume timer when user stops speaking
+            self._start_false_interruption_timer(timeout)
 
     def on_vad_inference_done(self, ev: vad.VADEvent) -> None:
+        # feed speech frames to the gender detector in real-time
+        if self._gender_detector is not None and ev.speaking and ev.frames:
+            self._gender_detector.push_frames(ev.frames)
+
         if self._turn_detection in ("manual", "realtime_llm"):
             # ignore vad inference done event if turn_detection is manual or realtime_llm
             return
@@ -2123,12 +2137,48 @@ class AgentActivity(RecognitionHooks):
             # avoid interruption if the new_transcript is too short
             return False
 
+        # inject gender into system prompt before the LLM sees this turn
+        self._apply_gender_to_instructions()
+
         old_task = self._user_turn_completed_atask
         self._user_turn_completed_atask = self._create_speech_task(
             self._user_turn_completed_task(old_task, info),
             name="AgentActivity._user_turn_completed_task",
         )
         return True
+
+    def _apply_gender_to_instructions(self) -> None:
+        """Synchronously prepend a gender hint to the system instructions.
+
+        This is called at on_end_of_turn (before LLM), so the inference task
+        launched from push_frames / finalize has already finished (it ran while
+        the user was still speaking / STT was processing).
+        """
+        if self._gender_detector is None:
+            return
+
+        gender = self._gender_detector.result
+        if gender is None:
+            return  # not enough audio or uncertain — use neutral prompt as-is
+
+        # snapshot base instructions the first time we have a result
+        if self._base_instructions is None:
+            self._base_instructions = self._agent.instructions or ""
+
+        gender_hint = f"\n\n[Detected speaker gender: {gender}]"
+        new_instructions = self._base_instructions + gender_hint
+
+        # Only update if actually changed (avoids unnecessary ChatContext mutations)
+        if self._agent.instructions == new_instructions:
+            return
+
+        self._agent._instructions = new_instructions
+        update_instructions(
+            self._agent._chat_ctx,
+            instructions=new_instructions,
+            add_if_missing=True,
+        )
+        logger.debug("gender hint applied to instructions | gender=%s", gender)
 
     @utils.log_exceptions(logger=logger)
     async def _user_turn_completed_task(

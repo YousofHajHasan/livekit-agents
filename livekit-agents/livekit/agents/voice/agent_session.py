@@ -230,6 +230,8 @@ class AgentSession(rtc.EventEmitter[EventTypes], Generic[Userdata_T]):
         vad: NotGivenOr[vad.VAD | None] = NOT_GIVEN,
         llm: NotGivenOr[llm.LLM | llm.RealtimeModel | LLMModels | str] = NOT_GIVEN,
         tts: NotGivenOr[tts.TTS | TTSModels | str] = NOT_GIVEN,
+        gender_detection: NotGivenOr[bool] = NOT_GIVEN,
+        gender_detector: NotGivenOr[object] = NOT_GIVEN,
         turn_handling: NotGivenOr[TurnHandlingOptions] = NOT_GIVEN,
         # Tool settings
         tools: NotGivenOr[list[llm.Tool | llm.Toolset]] = NOT_GIVEN,
@@ -426,9 +428,7 @@ class AgentSession(rtc.EventEmitter[EventTypes], Generic[Userdata_T]):
                 "and will be removed in a future version. Use `MCPToolset` instead."
             )
         self._tools = tools if is_given(tools) else []
-        self._async_tool_options = _resolve_async_tool_options(
-            tool_handling.get("async_options") if is_given(tool_handling) else None
-        )
+        self._gender_detector = gender_detector if is_given(gender_detector) else None
 
         # unrecoverable error counts, reset after agent speaking
         self._llm_error_counts = 0
