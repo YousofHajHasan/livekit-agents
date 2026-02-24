@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "livekit-plugins-gender-detection"
 dynamic = ["version"]
 description = "Gender detection plugin for LiveKit Agents using wav2vec2"
-readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10.0"
 authors = [{ name = "LiveKit", email = "hello@livekit.io" }]
