@@ -2148,11 +2148,11 @@ class AgentActivity(RecognitionHooks):
         return True
 
     def _apply_gender_to_instructions(self) -> None:
-        """Synchronously prepend a gender hint to the system instructions.
+        """Inject the current gender hint into the system prompt AND as a
+        developer-role reminder injected just before the latest user message.
 
-        This is called at on_end_of_turn (before LLM), so the inference task
-        launched from push_frames / finalize has already finished (it ran while
-        the user was still speaking / STT was processing).
+        Placing the reminder immediately before the user turn prevents the LLM
+        from ignoring it due to long conversation history written in the old gender.
         """
         if self._gender_detector is None:
             return
@@ -2161,24 +2161,47 @@ class AgentActivity(RecognitionHooks):
         if gender is None:
             return  # not enough audio or uncertain — use neutral prompt as-is
 
-        # snapshot base instructions the first time we have a result
+        # --- 1. Update the system / instructions message ---
         if self._base_instructions is None:
             self._base_instructions = self._agent.instructions or ""
 
-        gender_hint = f"\n\n[Detected speaker gender: {gender}]"
-        new_instructions = self._base_instructions + gender_hint
+        gender_hint_text = f"[Detected speaker gender: {gender}]"
+        new_instructions = self._base_instructions + f"\n\n{gender_hint_text}"
 
-        # Only update if actually changed (avoids unnecessary ChatContext mutations)
-        if self._agent.instructions == new_instructions:
-            return
+        if self._agent.instructions != new_instructions:
+            self._agent._instructions = new_instructions
+            update_instructions(
+                self._agent._chat_ctx,
+                instructions=new_instructions,
+                add_if_missing=True,
+            )
 
-        self._agent._instructions = new_instructions
-        update_instructions(
-            self._agent._chat_ctx,
-            instructions=new_instructions,
-            add_if_missing=True,
-        )
-        logger.debug("gender hint applied to instructions | gender=%s", gender)
+        # --- 2. Remove any previous gender reminder injected last turn ---
+        _GENDER_REMINDER_ID = "__gender_reminder__"
+        self._agent._chat_ctx.items[:] = [
+            item for item in self._agent._chat_ctx.items
+            if getattr(item, "id", None) != _GENDER_REMINDER_ID
+        ]
+
+        # --- 3. Insert a fresh reminder right before the last user message ---
+        items = self._agent._chat_ctx.items
+        # Find the index of the last user message
+        last_user_idx = None
+        for i in range(len(items) - 1, -1, -1):
+            item = items[i]
+            if hasattr(item, "role") and item.role == "user":
+                last_user_idx = i
+                break
+
+        if last_user_idx is not None:
+            reminder = llm.ChatMessage.create(
+                role="developer",
+                content=f"IMPORTANT — {gender_hint_text}. Apply the correct gender forms to THIS response only.",
+                id=_GENDER_REMINDER_ID,
+            )
+            items.insert(last_user_idx, reminder)
+
+        logger.debug("gender hint applied | gender=%s", gender)
 
     @utils.log_exceptions(logger=logger)
     async def _user_turn_completed_task(
