@@ -90,6 +90,43 @@ class GenderDetector:
         """Convenience constructor.  Blocks while loading the ONNX model."""
         return cls(model_root, **kwargs)  # type: ignore[arg-type]
 
+    @classmethod
+    def load_from_hf(
+        cls,
+        repo_id: str = "Yousof10/GenderDetection",
+        *,
+        cache_dir: str | None = None,
+        **kwargs: object,
+    ) -> "GenderDetector":
+        """Download model files from HuggingFace Hub and load the detector.
+
+        The files are cached locally by ``huggingface_hub`` so subsequent
+        starts are instant (no re-download unless the revision changes).
+
+        Parameters
+        ----------
+        repo_id:
+            HuggingFace repo in ``owner/name`` format.
+            Defaults to ``"Yousof10/GenderDetection"``.
+        cache_dir:
+            Optional override for the HF cache directory.
+            Defaults to the standard HF_HOME cache (``~/.cache/huggingface``).
+        """
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise ImportError(
+                "huggingface_hub is required to use load_from_hf(). "
+                "Install it with: pip install huggingface-hub"
+            ) from exc
+
+        model_root = snapshot_download(
+            repo_id=repo_id,
+            cache_dir=cache_dir,
+            ignore_patterns=["*.gitattributes", ".gitattributes"],
+        )
+        return cls(model_root, **kwargs)  # type: ignore[arg-type]
+
     def begin_turn(self) -> None:
         """Reset all per-turn state.  Call at on_start_of_speech."""
         if self._inference_task is not None and not self._inference_task.done():

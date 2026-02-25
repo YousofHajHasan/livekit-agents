@@ -24,6 +24,7 @@ dependencies = [
     "audonnx>=0.8.0",
     "audeer>=2.0.0",
     "numpy>=1.26",
+    "huggingface-hub>=0.20.0",
 ]
 
 [project.optional-dependencies]
