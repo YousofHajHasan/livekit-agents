@@ -226,8 +226,6 @@ class AgentActivity(RecognitionHooks):
             if hasattr(sess, "_gender_detector")
             else None
         )
-        # base instructions without gender suffix — set on first use
-        self._base_instructions: str | None = None
 
         if (
             isinstance(self.llm, llm.RealtimeModel)
@@ -2137,8 +2135,6 @@ class AgentActivity(RecognitionHooks):
             # avoid interruption if the new_transcript is too short
             return False
 
-        # inject gender into system prompt before the LLM sees this turn
-        self._apply_gender_to_instructions()
 
         old_task = self._user_turn_completed_atask
         self._user_turn_completed_atask = self._create_speech_task(
@@ -2148,12 +2144,6 @@ class AgentActivity(RecognitionHooks):
         return True
 
     def _apply_gender_to_instructions(self) -> None:
-        """Inject the current gender hint into the system prompt AND as a
-        developer-role reminder injected just before the latest user message.
-
-        Placing the reminder immediately before the user turn prevents the LLM
-        from ignoring it due to long conversation history written in the old gender.
-        """
         if self._gender_detector is None:
             return
 
@@ -2161,31 +2151,17 @@ class AgentActivity(RecognitionHooks):
         if gender is None:
             return  # not enough audio or uncertain — use neutral prompt as-is
 
-        # --- 1. Update the system / instructions message ---
-        if self._base_instructions is None:
-            self._base_instructions = self._agent.instructions or ""
-
         gender_hint_text = f"[Detected speaker gender: {gender}]"
-        new_instructions = self._base_instructions + f"\n\n{gender_hint_text}"
 
-        if self._agent.instructions != new_instructions:
-            self._agent._instructions = new_instructions
-            update_instructions(
-                self._agent._chat_ctx,
-                instructions=new_instructions,
-                add_if_missing=True,
-            )
-
-        # --- 2. Remove any previous gender reminder injected last turn ---
+        # --- 1. Remove any previous gender reminder injected last turn ---
         _GENDER_REMINDER_ID = "__gender_reminder__"
         self._agent._chat_ctx.items[:] = [
             item for item in self._agent._chat_ctx.items
             if getattr(item, "id", None) != _GENDER_REMINDER_ID
         ]
 
-        # --- 3. Insert a fresh reminder right before the last user message ---
+        # --- 2. Insert a fresh reminder right before the last user message ---
         items = self._agent._chat_ctx.items
-        # Find the index of the last user message
         last_user_idx = None
         for i in range(len(items) - 1, -1, -1):
             item = items[i]
@@ -2208,12 +2184,24 @@ class AgentActivity(RecognitionHooks):
         self, old_task: asyncio.Task[None] | None, info: _EndOfTurnInfo
     ) -> None:
         if old_task is not None:
-            # We never cancel user code as this is very confusing.
-            # So we wait for the old execution of on_user_turn_completed to finish.
-            # In practice this is OK because most speeches will be interrupted if a new turn
-            # is detected. So the previous execution should complete quickly.
             await old_task
 
+        self._preemptive_generation_count = 0
+
+        # Wait for gender inference to finish (it runs in a background thread).
+        # The ONNX call takes ~30-60ms — we give it up to 300ms max so it never
+        # adds noticeable latency, but short utterances that missed the 2s trigger
+        # will still get a result by the time we reach the LLM call.
+        if self._gender_detector is not None:
+            inference_task = self._gender_detector._inference_task
+            if inference_task is not None and not inference_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(inference_task), timeout=0.08)
+                except asyncio.TimeoutError:
+                    logger.debug("gender inference timed out, proceeding without gender hint")
+
+        # inject gender hint now that inference is complete
+        self._apply_gender_to_instructions()
         self._preemptive_generation_count = 0
 
         # When the audio recognition detects the end of a user turn:
