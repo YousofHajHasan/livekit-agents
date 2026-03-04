@@ -39,10 +39,7 @@ from .models import ChatModels
 from .utils import create_tools_config, to_response_format
 from .version import __version__
 
-# Add debug logging for google genai client
-logger.warning(
-    "Google GenAI client debug logging is enabled."
-)
+print(">>> [FORK CHECK] llm.py loaded from forked repo <<<", flush=True)
 
 def _is_gemini_3_model(model: str) -> bool:
     """Check if model is Gemini 3 series"""
