@@ -169,13 +169,17 @@ class GenderDetector:
         """
         Called from on_end_of_speech.  If the 2-s threshold was never reached
         (very short utterance) we fire inference now with whatever we have.
-        If inference is already running/done, we re-run with the full buffer
-        to get a more accurate result.
+        If the early inference '> 2sec' already triggered, we skip re-running — gender
+        is reliably determined from the first 2s and re-inferring on the full
+        buffer (which may be 5-15s) adds latency with little accuracy benefit.
         """
         if not self._buffer:
             return  # nothing was spoken
 
-        # Always run a final inference on the full buffer
+        if self._triggered:
+            return  # early inference already ran on 2s — no need to re-run
+
+        # Short utterance (< 2s): this is the only inference opportunity
         self._launch_inference(snapshot=list(self._buffer))
 
     @property
