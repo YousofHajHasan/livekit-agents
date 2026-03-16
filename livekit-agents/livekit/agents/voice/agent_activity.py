@@ -2184,6 +2184,11 @@ class AgentActivity(RecognitionHooks):
         self, old_task: asyncio.Task[None] | None, info: _EndOfTurnInfo
     ) -> None:
         if old_task is not None:
+            # If a newer turn has already been queued while we were waiting,
+            # this task is stale — drop it immediately instead of blocking
+            # behind the previous turn's full LLM + TTS pipeline.
+            if self._user_turn_completed_atask != asyncio.current_task():
+                return
             await old_task
 
         self._preemptive_generation_count = 0
