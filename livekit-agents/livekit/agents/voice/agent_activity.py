@@ -2171,7 +2171,7 @@ class AgentActivity(RecognitionHooks):
 
         if last_user_idx is not None:
             reminder = llm.ChatMessage(
-                role="developer",
+                role="user",
                 content=[f"IMPORTANT — {gender_hint_text}. Apply the correct gender forms to THIS response only."],
                 id=_GENDER_REMINDER_ID,
             )
