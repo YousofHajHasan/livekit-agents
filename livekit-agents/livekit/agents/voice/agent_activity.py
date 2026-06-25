@@ -1919,7 +1919,7 @@ class AgentActivity(RecognitionHooks):
 
         if (
             self._paused_speech
-            and (timeout := self._session.options.false_interruption_timeout) is not None
+            and (timeout := self._session.options.interruption["false_interruption_timeout"]) is not None
         ):
             # schedule a resume timer when user stops speaking
             self._start_false_interruption_timer(timeout)
